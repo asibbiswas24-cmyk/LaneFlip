@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#070b18">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icons/icon-192.png">
+<title>Lane Flip</title>
+<style>
+*{box-sizing:border-box}
+html,body{margin:0;width:100%;height:100%;overflow:hidden;background:#070b18;font-family:Arial,sans-serif;touch-action:none}
+#game{position:fixed;inset:0;background:linear-gradient(#070b18,#10182d)}
+canvas{width:100%;height:100%;display:block}
+.hud{position:absolute;top:18px;left:0;right:0;display:flex;justify-content:space-between;padding:20px 24px;color:white;pointer-events:none}
+.hud div{text-align:center;min-width:100px}
+.hud span{display:block;font-size:11px;letter-spacing:3px;opacity:.6}
+.hud b{display:block;font-size:28px;margin-top:4px}
+.overlay{position:absolute;inset:0;display:grid;place-items:center;background:rgba(3,6,15,.55)}
+.hidden{display:none!important}
+.card{text-align:center;color:white;padding:36px 28px;width:min(88vw,380px);border:1px solid rgba(255,255,255,.12);border-radius:28px;background:rgba(12,18,39,.94);box-shadow:0 20px 80px rgba(0,0,0,.45)}
+.logo{font-size:46px;line-height:.8;letter-spacing:7px;font-weight:900}
+.logo strong{font-size:58px;color:#55ead5}
+.card h1{font-size:34px;margin:0 0 18px;color:#ff5268}
+.card p{color:#aeb9d2;line-height:1.6;font-size:15px}
+.card button{margin-top:18px;width:100%;height:58px;border:0;border-radius:18px;background:#55ead5;color:#061016;font-size:18px;font-weight:900;letter-spacing:2px}
+.card button:active{transform:scale(.97)}
+</style>
+</head>
+<body>
+<main id="game">
+<canvas id="canvas"></canvas>
+
+<div class="hud">
+<div><span>SCORE</span><b id="score">0</b></div>
+<div><span>BEST</span><b id="best">0</b></div>
+</div>
+
+<div id="start" class="overlay">
+<div class="card">
+<div class="logo">LANE<br><strong>FLIP</strong></div>
+<p>Tap anywhere to switch lanes.<br>Avoid the red blocks.</p>
+<button id="play">PLAY</button>
+</div>
+</div>
+
+<div id="over" class="overlay hidden">
+<div class="card">
+<h1>GAME OVER</h1>
+<p>Score: <b id="finalScore">0</b></p>
+<p>Best: <b id="finalBest">0</b></p>
+<button id="again">PLAY AGAIN</button>
+</div>
+</div>
+</main>
+
+<script>
+const canvas=document.getElementById("canvas");
+const ctx=canvas.getContext("2d");
+const scoreEl=document.getElementById("score");
+const bestEl=document.getElementById("best");
+const start=document.getElementById("start");
+const over=document.getElementById("over");
+const finalScore=document.getElementById("finalScore");
+const finalBest=document.getElementById("finalBest");
+
+let W=0,H=0,dpr=1;
+let player,obstacles,score,best,running=false,last=0,spawn=0,speed=310,shake=0;
+
+function resize(){
+ dpr=Math.min(window.devicePixelRatio||1,2);
+ W=window.innerWidth; H=window.innerHeight;
+ canvas.width=W*dpr; canvas.height=H*dpr;
+ canvas.style.width=W+"px"; canvas.style.height=H+"px";
+ ctx.setTransform(dpr,0,0,dpr,0,0);
+ if(player){player.y=H*.78;player.x=laneX(player.lane)}
+}
+window.addEventListener("resize",resize);
+resize();
+
+best=Number(localStorage.getItem("laneFlipBest")||0);
+bestEl.textContent=best;
+
+function laneX(lane){
+ return W/2+(lane?1:-1)*Math.min(W*.25,170);
+}
+
+function reset(){
+ score=0;
+ speed=310;
+ spawn=.7;
+ obstacles=[];
+ player={lane:0,x:laneX(0),y:H*.78,size:Math.min(W*.105,46)};
+ scoreEl.textContent="0";
+}
+
+function startGame(){
+ start.classList.add("hidden");
+ over.classList.add("hidden");
+ reset();
+ running=true;
+ last=performance.now();
+ requestAnimationFrame(loop);
+}
+
+function endGame(){
+ if(!running)return;
+ running=false;
+ shake=12;
+ if(score>best){
+  best=score;
+  localStorage.setItem("laneFlipBest",best);
+ }
+ finalScore.textContent=score;
+ finalBest.textContent=best;
+ bestEl.textContent=best;
+ over.classList.remove("hidden");
+ draw();
+}
+
+function flip(){
+ if(running) player.lane=player.lane?0:1;
+}
+
+function spawnObstacle(){
+ const lane=Math.random()<.5?0:1;
+ obstacles.push({
+  lane:lane,
+  y:-50,
+  size:Math.min(W*.14,58),
+  passed:false
+ });
+}
+
+function update(dt){
+ player.x+=(laneX(player.lane)-player.x)*Math.min(1,dt*14);
+ speed=Math.min(720,310+score*10);
+
+ spawn-=dt;
+ if(spawn<=0){
+  spawnObstacle();
+  spawn=Math.max(.42,1.02-score*.012);
+ }
+
+ for(const o of obstacles){
+  o.y+=speed*dt;
+
+  if(!o.passed && o.y>player.y+player.size){
+   o.passed=true;
+   score++;
+   scoreEl.textContent=score;
+  }
+
+  const ox=laneX(o.lane);
+  const hit=(Math.abs(ox-player.x)<(player.size+o.size)*.34 &&
+             Math.abs(o.y-player.y)<(player.size+o.size)*.34);
+  if(hit){endGame();return}
+ }
+
+ obstacles=obstacles.filter(o=>o.y<H+80);
+ if(shake>0)shake=Math.max(0,shake-dt*35);
+}
+
+function roundRect(x,y,w,h,r){
+ ctx.beginPath();
+ ctx.roundRect(x,y,w,h,r);
+}
+
+function draw(){
+ ctx.clearRect(0,0,W,H);
+
+ let sx=shake?(Math.random()-.5)*shake:0;
+ let sy=shake?(Math.random()-.5)*shake:0;
+ ctx.save();
+ ctx.translate(sx,sy);
+
+ ctx.fillStyle="#0c1328";
+ ctx.fillRect(W*.12,0,W*.76,H);
+
+ ctx.strokeStyle="rgba(115,145,190,.13)";
+ ctx.lineWidth=2;
+ ctx.setLineDash([18,22]);
+ ctx.beginPath();
+ ctx.moveTo(W/2,0);
+ ctx.lineTo(W/2,H);
+ ctx.stroke();
+ ctx.setLineDash([]);
+
+ let offset=(performance.now()/8)%60;
+ ctx.strokeStyle="rgba(80,110,160,.09)";
+ for(let y=-60+offset;y<H;y+=60){
+  ctx.beginPath();
+  ctx.moveTo(W*.12,y);
+  ctx.lineTo(W*.88,y);
+  ctx.stroke();
+ }
+
+ for(const o of obstacles){
+  let x=laneX(o.lane),s=o.size;
+  ctx.shadowBlur=22;
+  ctx.shadowColor="#ff3855";
+  ctx.fillStyle="#ff3855";
+  roundRect(x-s/2,o.y-s/2,s,s,12);
+  ctx.fill();
+  ctx.shadowBlur=0;
+ }
+
+ let s=player.size;
+ ctx.shadowBlur=25;
+ ctx.shadowColor="#55ead5";
+ ctx.fillStyle="#55ead5";
+ roundRect(player.x-s/2,player.y-s/2,s,s,14);
+ ctx.fill();
+ ctx.shadowBlur=0;
+
+ ctx.fillStyle="#07131a";
+ ctx.fillRect(player.x-s*.28,player.y-s*.08,s*.56,s*.16);
+
+ ctx.restore();
+}
+
+function loop(t){
+ if(!running)return;
+ const dt=Math.min(.033,(t-last)/1000);
+ last=t;
+ update(dt);
+ draw();
+ if(running)requestAnimationFrame(loop);
+}
+
+canvas.addEventListener("pointerdown",function(e){
+ e.preventDefault();
+ flip();
+},{passive:false});
+
+document.getElementById("play").addEventListener("click",startGame);
+document.getElementById("again").addEventListener("click",startGame);
+
+reset();
+draw();
+if ("serviceWorker" in navigator) { window.addEventListener("load", () => navigator.serviceWorker.register("sw.js")); }
+</script>
+</body>
+</html>
